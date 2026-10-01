@@ -18,6 +18,7 @@ import os
 os.environ['PGCLIENTENCODING'] = 'UTF8'
 import psycopg2
 from psycopg2.extras import execute_values
+from proximity_generator import ProximityCodeGenerator
 import pyodbc
 from constants import (
     DB_TYPE_POSTGRES,
@@ -543,18 +544,65 @@ class DBConnector:
              'FROM dbo.Groups ORDER BY ID'),
         )
 
+    def get_all_proximity_codes(self, db_type: str, params: dict) -> list:
+        """Получить все существующие proximity-коды из БД."""
+        try:
+            conn = self._create_connection(db_type, params)
+        except Exception:
+            return []
+
+        try:
+            cur = conn.cursor()
+            if db_type == DB_TYPE_POSTGRES:
+                cur.execute("""
+                    SELECT encode(codep, 'hex') 
+                    FROM dbo.pmark 
+                    WHERE gtype = 4 AND codep IS NOT NULL
+                """)
+            codes = [row[0] for row in cur.fetchall()]
+            cur.close()
+            return codes
+        except Exception:
+            return []
+        finally:
+            conn.close()
+
+    def get_base_proximity_code(self, db_type: str, params: dict) -> str:
+        """Получить базовый код для генерации (первый из пула)."""
+        try:
+            conn = self._create_connection(db_type, params)
+        except Exception:
+            return "0801823a7ec0fe01fe016e"
+
+        try:
+            cur = conn.cursor()
+            if db_type == DB_TYPE_POSTGRES:
+                cur.execute("""
+                    SELECT encode(codep, 'hex') 
+                    FROM dbo.pmark
+                    WHERE gtype = 4 AND codep IS NOT NULL
+                    ORDER BY id LIMIT 1
+                """)
+            row = cur.fetchone()
+            cur.close()
+            return row[0] if row else "0801823a7ec0fe01fe016e"
+        except Exception:
+            return "0801823a7ec0fe01fe016e"
+        finally:
+            conn.close()
     # =========================================================================
     # МАССОВОЕ ДОБАВЛЕНИЕ ИДЕНТИФИКАТОРОВ (pMark)
     # =========================================================================
 
     def batch_add_marks(self, db_type: str, params: dict,
-                         person_ids: list, type_id: int,
-                         code_generator,
-                         group_id: int = None, config_id: int = None,
-                         start_date=None, finish_date=None,
-                         type_kind: str = 'normal',
-                         progress_callback=None,
-                         should_stop=None) -> dict:
+                        person_ids: list, type_id: int,
+                        code_generator,
+                        group_id: int = None, config_id: int = None,
+                        start_date=None, finish_date=None,
+                        type_kind: str = 'normal',
+                        progress_callback=None,
+                        should_stop=None,
+                        store_in_devices: bool = True) -> dict:  # ← НОВЫЙ ПАРАМЕТР
         """
         Массово создать идентификаторы (pMark) для списка сотрудников.
 
@@ -590,10 +638,11 @@ class DBConnector:
         stopped = False
 
         # Получаем дефолтные значения для NOT NULL FK-полей
-        if group_id is None:
-            group_id = self.get_min_group_id(db_type, params)
+        # config — битовая маска: бит 7 (128) = «Хранить код ключа в приборах»
         if config_id is None:
-            config_id = self.get_min_config_id(db_type, params)
+            config_id = 0
+        if store_in_devices:
+            config_id = config_id | 128
 
         conn = self._create_connection(db_type, params)
         try:
@@ -677,7 +726,10 @@ class DBConnector:
                 # Для PG codep имеет тип bytea — нужно bytes
                 # Для MSSQL — varchar, нужна строка
                 if db_type == DB_TYPE_POSTGRES and isinstance(code, str):
-                    code = code.encode('utf-8')
+                    try:
+                        code = bytes.fromhex(code.strip())  # hex-строка -> байты
+                    except ValueError:
+                        code = code.encode('utf-8')
                 elif db_type == DB_TYPE_MSSQL and isinstance(code, bytes):
                     code = code.hex().upper()
 
@@ -732,30 +784,6 @@ class DBConnector:
             'stopped': stopped,
         }
 
-    def _batch_insert_marks_postgres(self, conn, batch):
-        """Быстрая batch-вставка идентификаторов в PG."""
-        if not batch:
-            return
-        # ВАЖНО: в PG поля codep и codepadd имеют тип bytea.
-        # psycopg2 автоматически конвертирует Python bytes в bytea.
-        rows = [
-            (m['id'], m['gtype'], m['config'],
-             psycopg2.Binary(m['codep']) if isinstance(m['codep'], bytes) else m['codep'],
-             m['status'], m['owner'], m['groupid'],
-             m.get('start'), m.get('finish'))
-            for m in batch
-        ]
-        cur = conn.cursor()
-        try:
-            query = (
-                'INSERT INTO dbo.pmark '
-                '(id, gtype, config, codep, status, owner, groupid, start, finish) '
-                'VALUES %s'
-            )
-            execute_values(cur, query, rows, page_size=len(rows))
-        finally:
-            cur.close()
-
     def _batch_insert_marks_mssql(self, conn, batch):
         """Быстрая batch-вставка идентификаторов в MSSQL."""
         if not batch:
@@ -775,6 +803,41 @@ class DBConnector:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
             )
             cur.executemany(query, rows)
+        finally:
+            cur.close()
+
+    def _batch_insert_marks_postgres(self, conn, batch):
+        """Быстрая batch-вставка идентификаторов в PG (с нормализацией codep)."""
+        if not batch:
+            return
+
+        def normalize_codep(codep):
+            """Гарантирует bytes для bytea-поля codep (лечит двойную кодировку)."""
+            if isinstance(codep, (bytes, bytearray)):
+                return bytes(codep)
+            if isinstance(codep, str):
+                s = codep.strip()
+                try:
+                    return bytes.fromhex(s)   # hex-строка -> байты
+                except ValueError:
+                    return s.encode('utf-8')
+            return bytes(codep)
+
+        rows = [
+            (m['id'], m['gtype'], m['config'],
+             psycopg2.Binary(normalize_codep(m['codep'])),
+             m['status'], m['owner'], m['groupid'],
+             m.get('start'), m.get('finish'))
+            for m in batch
+        ]
+        cur = conn.cursor()
+        try:
+            query = (
+                'INSERT INTO dbo.pmark '
+                '(id, gtype, config, codep, status, owner, groupid, start, finish) '
+                'VALUES %s'
+            )
+            execute_values(cur, query, rows, page_size=len(rows))
         finally:
             cur.close()
 

@@ -12,11 +12,15 @@
 #
 #   7. Секция «Идентификаторы»:
 #      - Чекбокс «Выдать идентификатор всем созданным сотрудникам»
+#      - Чекбокс «Хранить код ключа в приборах» (бит 128 в pMark.config)
 #      - Combobox с типами идентификаторов из pTypePasswords
 #      - Combobox с уровнями доступа из dbo.Groups
 #        (по умолчанию ищется группа с именем «Максимум»)
 #      - Дата начала действия (по умолчанию сегодня)
 #      - Дата окончания (по умолчанию +1 год)
+#
+#   8. Proximity-карты генерируются встроенным конвертером Болид
+#      (bolid_converter.py): номер -> код с CRC-8 -> байты для codep.
 # ==============================================================================
 
 import os
@@ -30,6 +34,7 @@ from tkinter import ttk, messagebox
 from constants import COLOR_CONNECT_BTN, COLOR_CLOSE_BTN, DB_TYPE_POSTGRES
 from ui_widgets import center_window
 from person_generator import generate_person_data, generate_mark_code
+from proximity_generator import ProximityCodeGenerator
 
 
 _MAX_COUNT = 10_000_000
@@ -142,13 +147,13 @@ class MassAddView:
     def _build_marks_section(self, parent):
         """Секция «Идентификаторы»."""
         ttk.Separator(parent, orient="horizontal").grid(
-            row=5, column=0, columnspan=2, sticky="ew", pady=(15, 5)
+            row=5, column=0, columnspan=3, sticky="ew", pady=(15, 5)
         )
 
         tk.Label(
             parent, text="Идентификаторы (записи в pMark):",
             font=("Arial", 9, "bold"),
-        ).grid(row=6, column=0, columnspan=2, sticky="w", padx=5)
+        ).grid(row=6, column=0, columnspan=3, sticky="w", padx=5)
 
         self._add_marks_var = tk.BooleanVar(value=False)
         tk.Checkbutton(
@@ -157,35 +162,42 @@ class MassAddView:
             command=self._on_marks_toggle,
         ).grid(row=7, column=0, columnspan=2, sticky="w", padx=5, pady=(2, 2))
 
+        # НОВОЕ: флаг «Хранить код ключа в приборах» — ОТДЕЛЬНОЙ СТРОКОЙ НИЖЕ
+        self._store_devices_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            parent, text="Хранить код ключа в приборах",
+            variable=self._store_devices_var, font=("Arial", 9),
+        ).grid(row=8, column=0, columnspan=2, sticky="w", padx=25, pady=(0, 2))
+
         # Тип идентификатора
         tk.Label(parent, text="Тип идентификатора:",
-                 font=("Arial", 9)).grid(row=8, column=0, sticky="e", pady=5)
+                 font=("Arial", 9)).grid(row=9, column=0, sticky="e", pady=5)
         self._mark_type_combo = ttk.Combobox(
             parent, state="disabled", width=30,
         )
-        self._mark_type_combo.grid(row=8, column=1, padx=5, pady=5, sticky="w")
+        self._mark_type_combo.grid(row=9, column=1, padx=5, pady=5, sticky="w")
 
         self._mark_type_hint = tk.Label(
             parent, text="",
             font=("Arial", 8), fg="gray", wraplength=380, justify="left",
         )
-        self._mark_type_hint.grid(row=9, column=0, columnspan=2,
-                                   sticky="w", padx=25)
+        self._mark_type_hint.grid(row=10, column=0, columnspan=3,
+                                  sticky="w", padx=25)
         self._mark_type_combo.bind("<<ComboboxSelected>>", self._on_mark_type_change)
 
         # Уровень доступа
         tk.Label(parent, text="Уровень доступа:",
-                 font=("Arial", 9)).grid(row=10, column=0, sticky="e", pady=5)
+                 font=("Arial", 9)).grid(row=11, column=0, sticky="e", pady=5)
         self._access_combo = ttk.Combobox(
             parent, state="disabled", width=30,
         )
-        self._access_combo.grid(row=10, column=1, padx=5, pady=5, sticky="w")
+        self._access_combo.grid(row=11, column=1, padx=5, pady=5, sticky="w")
 
         # Срок действия — Start
         tk.Label(parent, text="Действует с:",
-                 font=("Arial", 9)).grid(row=11, column=0, sticky="e", pady=5)
+                 font=("Arial", 9)).grid(row=12, column=0, sticky="e", pady=5)
         date_start_frame = tk.Frame(parent)
-        date_start_frame.grid(row=11, column=1, padx=5, pady=5, sticky="w")
+        date_start_frame.grid(row=12, column=1, padx=5, pady=5, sticky="w")
         self._start_date_var = tk.StringVar(
             value=datetime.now().strftime("%d.%m.%Y")
         )
@@ -199,9 +211,9 @@ class MassAddView:
 
         # Срок действия — Finish
         tk.Label(parent, text="Действует по:",
-                 font=("Arial", 9)).grid(row=12, column=0, sticky="e", pady=5)
+                 font=("Arial", 9)).grid(row=13, column=0, sticky="e", pady=5)
         date_finish_frame = tk.Frame(parent)
-        date_finish_frame.grid(row=12, column=1, padx=5, pady=5, sticky="w")
+        date_finish_frame.grid(row=13, column=1, padx=5, pady=5, sticky="w")
         self._finish_date_var = tk.StringVar(
             value=(datetime.now() + timedelta(days=365)).strftime("%d.%m.%Y")
         )
@@ -216,25 +228,25 @@ class MassAddView:
     def _build_progress_section(self, parent):
         """Прогресс и статус."""
         ttk.Separator(parent, orient="horizontal").grid(
-            row=13, column=0, columnspan=2, sticky="ew", pady=(15, 5)
+            row=14, column=0, columnspan=3, sticky="ew", pady=(15, 5)
         )
 
         tk.Label(parent, text="Прогресс:",
-                 font=("Arial", 9)).grid(row=14, column=0, sticky="e", pady=5)
+                 font=("Arial", 9)).grid(row=15, column=0, sticky="e", pady=5)
         self._progress = ttk.Progressbar(parent, length=380, mode='determinate')
-        self._progress.grid(row=14, column=1, padx=5, pady=5, sticky="w")
+        self._progress.grid(row=15, column=1, padx=5, pady=5, sticky="w")
 
         self._status_label = tk.Label(
             parent, text="Готов к работе",
             font=("Arial", 9), fg="gray",
         )
-        self._status_label.grid(row=15, column=0, columnspan=2, pady=(5, 2))
+        self._status_label.grid(row=16, column=0, columnspan=3, pady=(5, 2))
 
         self._speed_label = tk.Label(
             parent, text="",
             font=("Arial", 8), fg="gray",
         )
-        self._speed_label.grid(row=16, column=0, columnspan=2)
+        self._speed_label.grid(row=17, column=0, columnspan=3)
 
     def _build_buttons(self):
         btn_frame = tk.Frame(self._win)
@@ -537,6 +549,8 @@ class MassAddView:
                 'group_name': group_name,
                 'start_date': start_date,
                 'finish_date': finish_date,
+                # НОВОЕ: флаг «Хранить код ключа в приборах»
+                'store_in_devices': self._store_devices_var.get(),
             }
 
         # UI в режим работы
@@ -589,6 +603,34 @@ class MassAddView:
                             f"Не удалось получить стартовый ID: {e}")
             return
 
+        # Для proximity инициализируем генератор (встроенный конвертер Болид)
+        proximity_gen = None
+        if marks_config and marks_config.get('type_kind') == 'normal':
+            type_name = marks_config.get('type_name', '').lower()
+            if 'proximity' in type_name or marks_config.get('type_id') == 4:
+                try:
+                    used_codes = self._connector.get_all_proximity_codes(
+                        self._db_type, self._params
+                    )
+
+                    proximity_gen = ProximityCodeGenerator(start=1)
+                    proximity_gen.load_used_codes(used_codes)
+
+                    if proximity_gen.available_count < count:
+                        error_msg = (
+                            f"❌ Недостаточно уникальных кодов!\n\n"
+                            f"Требуется: {count}\n"
+                            f"Доступно: {proximity_gen.available_count:,}\n"
+                        )
+                        self._win.after(0, self._on_worker_error, error_msg)
+                        return
+
+                    print(f"[Proximity] Генератор инициализирован. "
+                          f"Доступно: {proximity_gen.available_count:,}")
+                except Exception as e:
+                    print(f"[Proximity] Ошибка: {e}")
+                    proximity_gen = None
+
         def data_iter():
             for i in range(1, count + 1):
                 if self._stop_flag:
@@ -618,8 +660,7 @@ class MassAddView:
         # Этап 1: персонал
         try:
             persons_result = self._connector.batch_add_persons(
-                self._db_type, self._params,
-                data_iter(),
+                self._db_type, self._params, data_iter(),
                 progress_callback=progress_callback,
                 should_stop=lambda: self._stop_flag,
             )
@@ -628,8 +669,7 @@ class MassAddView:
             return
 
         if not marks_config or persons_result['stopped'] or persons_result['success'] == 0:
-            self._win.after(0, self._on_worker_done,
-                            persons_result, count, None)
+            self._win.after(0, self._on_worker_done, persons_result, count, None)
             return
 
         # Этап 2: идентификаторы
@@ -647,6 +687,10 @@ class MassAddView:
         type_kind = marks_config.get('type_kind', 'normal')
 
         def code_gen(person_id, t_id):
+            # Для proximity — НОВЫЙ генератор (bytes, 11 байт, CRC-8)
+            if proximity_gen is not None:
+                return proximity_gen.generate()
+            # Для остальных типов — старая логика
             return generate_mark_code(person_id, t_id, type_name)
 
         def marks_progress(success, errors, last_error):
@@ -663,24 +707,23 @@ class MassAddView:
 
         try:
             marks_result = self._connector.batch_add_marks(
-                self._db_type, self._params,
-                added_person_ids, type_id, code_gen,
+                self._db_type, self._params, added_person_ids, type_id, code_gen,
                 group_id=marks_config['group_id'],
                 start_date=marks_config['start_date'],
                 finish_date=marks_config['finish_date'],
-                type_kind=type_kind,  # для биометрии — пишем в pBioAccess
+                type_kind=type_kind,
                 progress_callback=marks_progress,
                 should_stop=lambda: self._stop_flag,
+                # НОВОЕ: флаг «Хранить код ключа в приборах»
+                store_in_devices=marks_config.get('store_in_devices', True),
             )
         except Exception as e:
-            self._win.after(0, self._on_worker_done,
-                            persons_result, count,
+            self._win.after(0, self._on_worker_done, persons_result, count,
                             {'success': 0, 'errors': marks_total,
                              'last_error': str(e), 'stopped': False})
             return
 
-        self._win.after(0, self._on_worker_done,
-                        persons_result, count, marks_result)
+        self._win.after(0, self._on_worker_done, persons_result, count, marks_result)
 
     def _get_next_person_id(self) -> int:
         """Получить следующий доступный ID для pList."""
