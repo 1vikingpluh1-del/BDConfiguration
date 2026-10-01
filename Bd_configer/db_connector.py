@@ -1226,6 +1226,17 @@ class DBConnector:
                 password=params['password'],
                 options='-c client_encoding=UTF8',
             )
+        except UnicodeDecodeError:
+            # Сервер ответил ошибкой на русском в CP1251, psycopg2 не смог
+            # декодировать как UTF-8. Показываем внятную причину вместо кракозябр.
+            raise ConnectionError(
+                "Сервер PostgreSQL отклонил подключение.\n"
+                "Возможные причины:\n"
+                "  • неверный логин или пароль\n"
+                "  • неверное имя базы данных\n"
+                "  • пользователю запрещены подключения (pg_hba.conf)\n\n"
+                "(Сообщение сервера пришло в кодировке CP1251 и не распозналось.)"
+            )
         except psycopg2.OperationalError as e:
             err_msg = str(e).lower()
             if 'password authentication failed' in err_msg:

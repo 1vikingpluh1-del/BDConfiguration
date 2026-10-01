@@ -32,6 +32,7 @@ dist/
 *.spec.bak
 
 # --- Виртуальное окружение ---
+BDConfiguration.spec/
 venv/
 .venv/
 env/
