@@ -1,0 +1,27 @@
+Инструкция по настройке пакетов для профилирования 
+
+Установите расширения для постгре:
+sudo apt update
+sudo apt install -y build-essential postgresql-server-dev-15
+Скачиваем и распаковываем pg_stat_monitor, указывая свой прокси в следующей команде, но перед :
+curl -x http://user:pass@192.168.0.54:3128 -L -o main.zip https://github.com/percona/pg_stat_monitor/archive/refs/heads/main.zip
+unzip main.zip
+cd pg_stat_monitor-main
+
+Коомпилиреуем и устанавливаем:
+make USE_PGXS=1
+sudo make USE_PGXS=1 install
+sudo nano /etc/postgresql/15/main/postgresql.conf
+В конец добавить следующие строки:
+shared_preload_libraries = 'pg_stat_monitor,pg_stat_statements'
+После сохранить, выйти и сделать:
+sudo pg_ctlcluster 15 main restart
+
+потом в pgAdmin4 апрописываем расширения на ту базу которую хотим профилировать 
+
+CREATE EXTENSION pg_stat_monitor;
+CREATE EXTENSION pg_stat_statements;
+Ребут всего компа
+
+Дальше запускайте bd_configer 1.5.2, подключайтесь и профилируйте
+P.S кому надо следующая инструкция по запуску 
