@@ -19,8 +19,9 @@
 #      - Дата начала действия (по умолчанию сегодня)
 #      - Дата окончания (по умолчанию +1 год)
 #
-#   8. Proximity-карты генерируются встроенным конвертером Болид
-#      (bolid_converter.py): номер -> код с CRC-8 -> байты для codep.
+#   8. Proximity-карты генерируются через ProximityCodeGenerator:
+#      номер карты -> number_to_abd_code() -> CRC-8 Болид -> байты для codep.
+#      Пример: номер 100001 -> код 8E0000000186A101
 # ==============================================================================
 
 import os
@@ -36,13 +37,10 @@ from ui_widgets import center_window
 from person_generator import generate_person_data, generate_mark_code
 from proximity_generator import ProximityCodeGenerator
 
-
 _MAX_COUNT = 10_000_000
 _UI_UPDATE_EVERY_N = 1000
 
 # Названия групп доступа в Орионе, которые соответствуют «полному доступу».
-# Когда пользователь открывает окно — мы ищем группу с одним из этих имён
-# и подставляем её в Combobox по умолчанию.
 _DEFAULT_GROUP_NAMES = ('максимум', 'максимальный', 'полный', 'full', 'admin')
 
 
@@ -59,15 +57,8 @@ class MassAddView:
         self._worker_thread = None
         self._start_time = None
 
-        # Кэш справочников.
-        # _all_types — единый список ВСЕХ типов идентификаторов:
-        #   list[(id, name, kind)]
-        #   kind: 'normal' для типов из pTypePasswords;
-        #         'finger'/'face'/'palm'/'photo'/'qr_bio'/'bio' — биометрия из
-        #         pBioTypePasswords.
-        # Combobox показывает их вперемешку с маркером в имени.
         self._all_types = []
-        self._access_groups = []    # list[(id, name, comment)]
+        self._access_groups = []
 
         # --- Окно ---
         self._win = tk.Toplevel(parent)
@@ -141,7 +132,7 @@ class MassAddView:
             font=("Arial", 8), fg="#FF9800",
         )
         self._photo_warning.grid(row=4, column=0, columnspan=2,
-                                  sticky="w", padx=25)
+                                 sticky="w", padx=25)
         self._photo_warning.grid_remove()
 
     def _build_marks_section(self, parent):
@@ -162,7 +153,7 @@ class MassAddView:
             command=self._on_marks_toggle,
         ).grid(row=7, column=0, columnspan=2, sticky="w", padx=5, pady=(2, 2))
 
-        # НОВОЕ: флаг «Хранить код ключа в приборах» — ОТДЕЛЬНОЙ СТРОКОЙ НИЖЕ
+        # Флаг «Хранить код ключа в приборах»
         self._store_devices_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
             parent, text="Хранить код ключа в приборах",
@@ -183,7 +174,9 @@ class MassAddView:
         )
         self._mark_type_hint.grid(row=10, column=0, columnspan=3,
                                   sticky="w", padx=25)
-        self._mark_type_combo.bind("<<ComboboxSelected>>", self._on_mark_type_change)
+        self._mark_type_combo.bind(
+            "<<ComboboxSelected>>", self._on_mark_type_change
+        )
 
         # Уровень доступа
         tk.Label(parent, text="Уровень доступа:",
@@ -233,7 +226,9 @@ class MassAddView:
 
         tk.Label(parent, text="Прогресс:",
                  font=("Arial", 9)).grid(row=15, column=0, sticky="e", pady=5)
-        self._progress = ttk.Progressbar(parent, length=380, mode='determinate')
+        self._progress = ttk.Progressbar(
+            parent, length=380, mode='determinate'
+        )
         self._progress.grid(row=15, column=1, padx=5, pady=5, sticky="w")
 
         self._status_label = tk.Label(
@@ -301,7 +296,8 @@ class MassAddView:
                 if not self._all_types:
                     messagebox.showwarning(
                         "Нет типов идентификаторов",
-                        "В таблицах pTypePasswords и pBioTypePasswords нет записей."
+                        "В таблицах pTypePasswords и pBioTypePasswords "
+                        "нет записей."
                     )
                     self._add_marks_var.set(False)
                     return
@@ -343,7 +339,6 @@ class MassAddView:
             return
         type_id, name, kind = self._all_types[idx]
 
-        # Подсказка зависит от вида:
         if kind == 'normal':
             hint = f"ID типа: {type_id} (обычный идентификатор)"
             fg = "gray"
@@ -386,7 +381,6 @@ class MassAddView:
         """
         Загрузить ОБА справочника: pTypePasswords + pBioTypePasswords.
         Объединяет их в self._all_types: list[(id, name, kind)].
-        Combobox показывает оба списка с маркером.
         """
         # Обычные типы
         normal_types = []
@@ -405,13 +399,11 @@ class MassAddView:
             bio_rows = self._connector.get_bio_password_types(
                 self._db_type, self._params
             )
-            # bio_rows: list[(id, name, kind)]
             for bid, name, kind in bio_rows:
                 bio_types.append((bid, name, kind))
         except Exception as e:
             print(f"Ошибка загрузки pBioTypePasswords: {e}")
 
-        # Объединяем: сначала обычные, потом биометрия
         self._all_types = normal_types + bio_types
 
         if self._all_types:
@@ -420,15 +412,13 @@ class MassAddView:
                 if kind == 'normal':
                     label = f"{name}  (ID={tid})"
                 else:
-                    # Биометрию помечаем эмоджи + словом, чтобы пользователь
-                    # сразу видел отличие
                     icons = {
                         'finger': '🖐',
-                        'face':   '😊',
-                        'palm':   '🖐',
-                        'photo':  '📷',
+                        'face': '😊',
+                        'palm': '🖐',
+                        'photo': '📷',
                         'qr_bio': '⌗',
-                        'bio':    '◆',
+                        'bio': '◆',
                     }
                     icon = icons.get(kind, '◆')
                     label = f"{icon} {name}  (БИО, ID={tid})"
@@ -457,10 +447,6 @@ class MassAddView:
     # =========================================================================
 
     def _parse_date(self, text: str, label: str):
-        """
-        Распарсить дату формата дд.мм.гггг. Возвращает datetime или None
-        (если строка пустая). Бросает ValueError при ошибке формата.
-        """
         text = (text or '').strip()
         if not text:
             return None
@@ -477,7 +463,6 @@ class MassAddView:
     # =========================================================================
 
     def _on_create(self):
-        # Парсим количество
         raw = self._count_var.get().strip()
         if not raw:
             messagebox.showerror("Ошибка", "Введите количество.")
@@ -491,7 +476,9 @@ class MassAddView:
         if count < 1 or count > _MAX_COUNT:
             messagebox.showerror(
                 "Ошибка",
-                f"Количество должно быть от 1 до {_MAX_COUNT:,}".replace(",", " ")
+                f"Количество должно быть от 1 до {_MAX_COUNT:,}".replace(
+                    ",", " "
+                )
             )
             return
 
@@ -519,7 +506,6 @@ class MassAddView:
                 messagebox.showerror("Ошибка", "Выберите уровень доступа.")
                 return
 
-            # Парсим даты
             try:
                 start_date = self._parse_date(
                     self._start_date_var.get(), "Действует с"
@@ -544,12 +530,11 @@ class MassAddView:
             marks_config = {
                 'type_id': type_id,
                 'type_name': type_name,
-                'type_kind': type_kind,  # 'normal' | 'finger' | 'face' | ...
+                'type_kind': type_kind,
                 'group_id': group_id,
                 'group_name': group_name,
                 'start_date': start_date,
                 'finish_date': finish_date,
-                # НОВОЕ: флаг «Хранить код ключа в приборах»
                 'store_in_devices': self._store_devices_var.get(),
             }
 
@@ -584,8 +569,8 @@ class MassAddView:
     def _on_close(self):
         if self._worker_thread and self._worker_thread.is_alive():
             if not messagebox.askyesno(
-                "Закрыть окно?",
-                "Идёт массовое добавление. Прервать и закрыть окно?"
+                    "Закрыть окно?",
+                    "Идёт массовое добавление. Прервать и закрыть окно?"
             ):
                 return
             self._stop_flag = True
@@ -603,30 +588,25 @@ class MassAddView:
                             f"Не удалось получить стартовый ID: {e}")
             return
 
-        # Для proximity инициализируем генератор (встроенный конвертер Болид)
+        # Инициализация генератора Proximity (стандартный алгоритм Болид)
         proximity_gen = None
+
         if marks_config and marks_config.get('type_kind') == 'normal':
             type_name = marks_config.get('type_name', '').lower()
+
+            # Proximity-карты (ID=4 или имя содержит "proximity")
             if 'proximity' in type_name or marks_config.get('type_id') == 4:
                 try:
+                    proximity_gen = ProximityCodeGenerator(start=100001)
+
+                    # Загружаем уже занятые номера из БД
                     used_codes = self._connector.get_all_proximity_codes(
                         self._db_type, self._params
                     )
-
-                    proximity_gen = ProximityCodeGenerator(start=1)
                     proximity_gen.load_used_codes(used_codes)
 
-                    if proximity_gen.available_count < count:
-                        error_msg = (
-                            f"❌ Недостаточно уникальных кодов!\n\n"
-                            f"Требуется: {count}\n"
-                            f"Доступно: {proximity_gen.available_count:,}\n"
-                        )
-                        self._win.after(0, self._on_worker_error, error_msg)
-                        return
-
                     print(f"[Proximity] Генератор инициализирован. "
-                          f"Доступно: {proximity_gen.available_count:,}")
+                          f"Следующий номер: {proximity_gen._next}")
                 except Exception as e:
                     print(f"[Proximity] Ошибка: {e}")
                     proximity_gen = None
@@ -647,7 +627,8 @@ class MassAddView:
 
         def progress_callback(success, errors, last_error):
             done = success + errors
-            if done - last_ui_update_done[0] >= _UI_UPDATE_EVERY_N or done == count:
+            if (done - last_ui_update_done[0] >= _UI_UPDATE_EVERY_N
+                    or done == count):
                 last_ui_update_done[0] = done
                 pct = (done / count) * 100 if count > 0 else 0
                 elapsed = time.time() - self._start_time
@@ -668,14 +649,18 @@ class MassAddView:
             self._win.after(0, self._on_worker_error, str(e))
             return
 
-        if not marks_config or persons_result['stopped'] or persons_result['success'] == 0:
-            self._win.after(0, self._on_worker_done, persons_result, count, None)
+        if (not marks_config
+                or persons_result['stopped']
+                or persons_result['success'] == 0):
+            self._win.after(
+                0, self._on_worker_done, persons_result, count, None
+            )
             return
 
         # Этап 2: идентификаторы
         added_person_ids = list(range(
             start_person_id,
-            start_person_id + persons_result['success'] + persons_result['errors']
+            start_person_id + persons_result['success']
         ))
 
         phase[0] = 'Идентификаторы'
@@ -687,7 +672,7 @@ class MassAddView:
         type_kind = marks_config.get('type_kind', 'normal')
 
         def code_gen(person_id, t_id):
-            # Для proximity — НОВЫЙ генератор (bytes, 11 байт, CRC-8)
+            # Для Proximity — стандартный генератор Болид
             if proximity_gen is not None:
                 return proximity_gen.generate()
             # Для остальных типов — старая логика
@@ -695,7 +680,8 @@ class MassAddView:
 
         def marks_progress(success, errors, last_error):
             done = success + errors
-            if done - last_ui_update_done[0] >= _UI_UPDATE_EVERY_N or done == marks_total:
+            if (done - last_ui_update_done[0] >= _UI_UPDATE_EVERY_N
+                    or done == marks_total):
                 last_ui_update_done[0] = done
                 pct = (done / marks_total) * 100 if marks_total > 0 else 0
                 elapsed = time.time() - self._start_time
@@ -707,33 +693,43 @@ class MassAddView:
 
         try:
             marks_result = self._connector.batch_add_marks(
-                self._db_type, self._params, added_person_ids, type_id, code_gen,
+                self._db_type, self._params, added_person_ids, type_id,
+                code_gen,
                 group_id=marks_config['group_id'],
                 start_date=marks_config['start_date'],
                 finish_date=marks_config['finish_date'],
                 type_kind=type_kind,
                 progress_callback=marks_progress,
                 should_stop=lambda: self._stop_flag,
-                # НОВОЕ: флаг «Хранить код ключа в приборах»
                 store_in_devices=marks_config.get('store_in_devices', True),
             )
         except Exception as e:
-            self._win.after(0, self._on_worker_done, persons_result, count,
-                            {'success': 0, 'errors': marks_total,
-                             'last_error': str(e), 'stopped': False})
+            self._win.after(
+                0, self._on_worker_done, persons_result, count,
+                {'success': 0, 'errors': marks_total,
+                 'last_error': str(e), 'stopped': False}
+            )
             return
 
-        self._win.after(0, self._on_worker_done, persons_result, count, marks_result)
+        self._win.after(
+            0, self._on_worker_done, persons_result, count, marks_result
+        )
 
     def _get_next_person_id(self) -> int:
         """Получить следующий доступный ID для pList."""
-        conn = self._connector._create_connection(self._db_type, self._params)
+        conn = self._connector._create_connection(
+            self._db_type, self._params
+        )
         try:
             cur = conn.cursor()
             if self._db_type == DB_TYPE_POSTGRES:
-                cur.execute('SELECT COALESCE(MAX(id), 0) + 1 FROM dbo.plist')
+                cur.execute(
+                    'SELECT COALESCE(MAX(id), 0) + 1 FROM dbo.plist'
+                )
             else:
-                cur.execute("SELECT ISNULL(MAX(ID), 0) + 1 FROM pList")
+                cur.execute(
+                    "SELECT ISNULL(MAX(ID), 0) + 1 FROM pList"
+                )
             next_id = cur.fetchone()[0]
             cur.close()
             return next_id
@@ -772,7 +768,8 @@ class MassAddView:
         stopped = persons_result['stopped']
 
         msg_parts = [
-            f"Сотрудники: добавлено {p_success:,}, ошибок {p_errors:,}".replace(",", " ")
+            f"Сотрудники: добавлено {p_success:,}, "
+            f"ошибок {p_errors:,}".replace(",", " ")
         ]
 
         if marks_result is not None:

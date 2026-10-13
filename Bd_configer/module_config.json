@@ -1,0 +1,49 @@
+{
+  "modules": [
+    {
+      "name": "ARM_ORION_PRO_1_20_3_5",
+      "path": "C:\\BOLID\\ARM_ORION_PRO_1_20_3_5",
+      "executables": [
+        "CSO.exe",
+        "ServerManager.exe"
+      ],
+      "priority": 1
+    },
+    {
+      "name": "ARM_ORION_PRO_1_20_3_8",
+      "path": "C:\\BOLID\\ARM_ORION_PRO_1_20_3_8",
+      "executables": [
+        "CSO.exe",
+        "ServerManager.exe"
+      ],
+      "priority": 2
+    },
+    {
+      "name": "ARM_ORION_PRO_1_20_3_9",
+      "path": "C:\\BOLID\\ARM_ORION_PRO_1_20_3_9",
+      "executables": [
+        "CSO.exe",
+        "ServerManager.exe"
+      ],
+      "priority": 3
+    },
+    {
+      "name": "ARM_ORION_PRO_2_0_1",
+      "path": "C:\\BOLID\\ARM_ORION_PRO_2_0_1",
+      "executables": [
+        "CSO.exe",
+        "ControlCenterCSO.exe"
+      ],
+      "priority": 4
+    },
+    {
+      "name": "ARM_ORION_PRO_2_0_2",
+      "path": "C:\\BOLID\\ARM_ORION_PRO_2_0_2",
+      "executables": [
+        "CSO.exe",
+        "ControlCenterCSO.exe"
+      ],
+      "priority": 5
+    }
+  ]
+}

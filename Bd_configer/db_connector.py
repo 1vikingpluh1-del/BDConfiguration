@@ -723,11 +723,12 @@ class DBConnector:
                 # Генерируем код идентификатора
                 code = code_generator(person_id, type_id)
 
-                # Для PG codep имеет тип bytea — нужно bytes
-                # Для MSSQL — varchar, нужна строка
-                if db_type == DB_TYPE_POSTGRES and isinstance(code, str):
+                # Для iButton-Proximity — bytes уже готовы (11 байт от генератора)
+                if isinstance(code, bytes) and code[:2] == b'\x08\x01':
+                    pass  # уже в формате БД
+                elif db_type == DB_TYPE_POSTGRES and isinstance(code, str):
                     try:
-                        code = bytes.fromhex(code.strip())  # hex-строка -> байты
+                        code = bytes.fromhex(code.strip())
                     except ValueError:
                         code = code.encode('utf-8')
                 elif db_type == DB_TYPE_MSSQL and isinstance(code, bytes):
